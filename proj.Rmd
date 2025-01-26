@@ -1,0 +1,252 @@
+---
+title: "Untitled"
+output: html_document
+date: "2024-11-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("C:\\Users\\voqua\\OneDrive - Northwestern University\\Academic\\Northwestern\\mlds-401-machine learning 1\\final project")
+```
+
+## 1
+```{r}
+library(dplyr)
+ np = read.table("np.csv", header=T, na.strings=".") %>%
+ arrange(SubscriptionId, t) %>%
+ group_by(SubscriptionId) %>%
+ mutate(nextchurn = lead(churn),
+ nextprice=lead(currprice),
+ t = t)
+```
+
+
+```{r}
+np
+```
+
+```{r}
+library(ggplot2)
+np %>%
+  group_by(trial) %>%                             # Group by 'trial'
+  summarize(prob_churn = sum(nextchurn == 1, na.rm = T) / n()) %>%
+  ggplot( aes(x = factor(trial), y = prob_churn)) +
+  geom_bar(stat = "identity", fill = "steelblue", width = 0.6) +
+  labs(
+    title = "Churn Probability by Trial Group",
+    x = "Trial Group",
+    y = "Probability of Churn"
+  )
+  # Calculate the proportion of churn within each trial group
+```
+
+
+## 2
+```{r}
+library(psych)
+pairs.panels(np[,c("nextchurn","t","trial", "nextprice", "regularity", "intensity")], stars=T) 
+```
+
+```{r}
+library(car)
+fit1 = glm(nextchurn ~ t+trial+nextprice+regularity+intensity, data = np, family = "binomial")
+summary(fit1)
+vif(fit1)
+```
+a: trial (0-1) increase the nextchurn which mean if the current supscrip is trial -> likely to increase odds churn 
+
+regularity and intensity both reduce churn probability 
+regularity higher coef
+inten is  not significant
+
+but then significant if not include regualrity -> multicolinearity 
+both regularity + intensity explan part of the reduce in logit of churn 
+
+
+```{r}
+fit2 = glm(nextchurn ~ t+trial+nextprice+regularity, data = np, family = binomial)
+summary(fit2)
+vif(fit2)
+```
+
+```{r}
+fit3 = glm(nextchurn ~ t+trial+nextprice+intensity, data = np, family = "binomial")
+summary(fit3)
+vif(fit3)
+```
+
+
+## 3
+```{r}
+fit4 = glm(nextchurn~t+trial+nextprice+sports1+news1+crime1+life1+obits1+business1
+ +opinion1, data = np, family = 'binomial')
+summary(fit4)
+vif(fit4)
+```
+```{r}
+fit5 = glm(nextchurn~t+trial+regularity +nextprice+sports1+news1+crime1+life1+obits1+business1
+ +opinion1, data = np, family = 'binomial')
+summary(fit5)
+vif(fit5)
+```
+sport and news was significacnt 
+add reg -> those insignificant
+
+multicolinearity
+
+high vif value for reg,news1
+sport not high vif but still be affcted by the regularity appearance -> not multicolinearity but folk (omited var)
+
+
+## 4
+```{r}
+fit6 = glm(nextchurn~t+trial+nextprice+mobile+tablet+desktop, data = np, family = 'binomial')
+summary(fit6)
+vif(fit6)
+```
+
+
+```{r}
+fit = glm(formula = nextchurn ~ t + trial , family = "binomial", data = np)
+summary(fit)
+plot(fit)
+```
+
+
+
+## 6
+
+```{r}
+fit7 = glm(nextchurn~t+trial+nextprice+sports1 + news1 + crime1 + life1 + obits1 + business1 + opinion1+ mobile+tablet+desktop, data = np, family = 'binomial')
+summary(fit7)
+vif(fit7)
+```
+
+
+```{r}
+library(glmnet)
+np_clean <- na.omit(np)
+
+# Prepare input matrix and response vector without NAs
+X <- model.matrix(nextchurn ~ t + trial + intensity + nextprice + sports1 + news1 + crime1 +
+                  life1 + obits1 + business1 + opinion1 + mobile + tablet + desktop, data = np_clean)[, -1]
+y <- np_clean$nextchurn
+
+# Fit LASSO with cross-validation
+cv_fit <- cv.glmnet(X, y, alpha = 1, family = "binomial")
+
+# Get the best lambda
+best_lambda <- cv_fit$lambda.min
+lasso_model <- glmnet(X, y, alpha = 1, lambda = best_lambda, family = "binomial")
+
+# Coefficients for the best lambda
+coef(lasso_model)
+```
+Instead of relying on p-values, LASSO automatically selects a subset of predictors by shrinking less important ones to zero. It’s particularly useful for reducing overfitting and handling multicollinearity.
+
+Retained Variables:
+
+t (time in subscription): Negative coefficient, indicating that longer subscription time reduces churn. This aligns with findings from statistical models.
+trial: Positive coefficient, suggesting trial users are more likely to churn, consistent with previous models.
+nextprice: Positive coefficient, showing that higher prices increase churn.
+regularity: Negative coefficient, confirming its role in reducing churn, as seen in the traditional models.
+desktop: Negative coefficient, suggesting desktop usage reduces churn.
+Dropped Variables:
+
+Content variables (sports1, news1, etc.) and device variables (mobile, tablet) were shrunk to zero. This suggests these predictors contribute little additional value to explaining churn when controlling for regularity and other factors.
+Smaller Coefficients:
+
+The magnitude of retained coefficients (e.g., regularity and trial) is smaller than in the traditional models due to Lasso's regularization, which penalizes large coefficients to avoid overfitting.
+
+```{r}
+# Load necessary library
+library(dplyr)
+
+# Calculate fitted probabilities
+fitted_probs <- fit$fitted.values
+
+# Create a dataframe for plotting
+plot_data <- data.frame(trial = np_clean$trial, fitted_probs = fitted_probs)
+
+# Aggregate by trial to get the mean fitted probabilities for each trial
+plot_data_summary <- plot_data %>%
+  group_by(trial) %>%
+  summarize(mean_fitted_probs = mean(fitted_probs))
+
+# Bar chart of trial vs mean fitted probabilities
+barplot(
+  height = plot_data_summary$mean_fitted_probs,
+  names.arg = plot_data_summary$trial,
+  xlab = "Trial",
+  ylab = "Mean Fitted Probability of nextchurn",
+  main = "Trial vs. Mean Fitted Probability of nextchurn",
+  col = "skyblue",
+  border = "white"
+)
+
+
+```
+```{r}
+# Plot histogram of trial
+hist(np$trial, 
+     main = "Histogram of Trial", 
+     xlab = "Trial", 
+     col = "skyblue", 
+     border = "white")
+```
+```{r}
+# Aggregate churn by trial
+trial_churn <- np %>%
+  group_by(trial) %>%
+  summarize(mean_churn = mean(churn))
+
+# Bar chart of trial vs churn
+barplot(
+  height = trial_churn$mean_churn,
+  names.arg = trial_churn$trial,
+  xlab = "Trial",
+  ylab = "Mean Churn Rate",
+  main = "Trial vs. Mean Churn Rate",
+  col = "lightgreen",
+  border = "white"
+)
+
+```
+
+```{r}
+# Fit the model
+fit <- glm(formula = nextchurn ~ t + trial, family = "binomial", data = np_clean)
+
+# Display summary
+summary(fit)
+
+```
+
+```{r}
+# Calculate fitted probabilities
+fitted_probs <- fit$fitted.values
+
+# Create a dataframe for plotting
+plot_data <- data.frame(trial = np_clean$trial, fitted_probs = fitted_probs)
+
+# Aggregate by trial to get the mean fitted probabilities for each trial
+plot_data_summary <- plot_data %>%
+  group_by(trial) %>%
+  summarize(mean_fitted_probs = mean(fitted_probs))
+
+# Plot the relationship
+plot(plot_data_summary$trial, plot_data_summary$mean_fitted_probs, type = "b",
+     xlab = "Trial", ylab = "Fitted Probability of nextchurn",
+     main = "Trial vs. Fitted Probability of nextchurn",
+     col = "blue", pch = 19)
+grid()
+
+```
+
+
+
+
+
